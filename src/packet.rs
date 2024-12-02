@@ -1,7 +1,7 @@
-use std::{
-    fs::File,
-    io::{BufReader, BufWriter, Read, Write},
-};
+// use std::{
+//     fs::File,
+//     io::{BufWriter, Write},
+// };
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -51,13 +51,6 @@ pub struct Packet {
     pub intensity: u8,
 }
 
-fn string_to_vec(s: &str) -> Vec<bool> {
-    s.chars()
-        .filter(|c| *c == '1' || *c == '0')
-        .map(|c| c == '1')
-        .collect()
-}
-
 fn checksum(data: &[bool]) -> Vec<bool> {
     let id_1 = data[0..8].iter().fold(0, |acc, &x| (acc << 1) + x as u8);
     let id_2 = data[8..16].iter().fold(0, |acc, &x| (acc << 1) + x as u8);
@@ -76,36 +69,36 @@ fn checksum(data: &[bool]) -> Vec<bool> {
     for i in (0..8).rev() {
         bits.push((checksum >> i) & 1 == 1);
     }
-    return bits;
+    bits
 }
 
 impl Packet {
-    pub fn new(data: &[bool]) -> Self {
-        // The id is the first 16 bits as a u16
-        let id: u16 = data[0..16].iter().fold(0, |acc, &x| (acc << 1) + x as u16);
-        let channel = match (data[16], data[17], data[18], data[19]) {
-            (false, false, false, false) => Channel::Zero,
-            (false, false, false, true) => Channel::One,
-            (false, false, true, false) => Channel::Two,
-            any => panic!("Invalid channel {:?}", any),
-        };
-        let action = match (data[20], data[21], data[22], data[23]) {
-            (false, false, false, true) => Action::Shock,
-            (false, false, true, false) => Action::Vibrate,
-            (false, false, true, true) => Action::Beep,
-            any => panic!("Invalid action {:?}", any),
-        };
-        let intensity: u8 = data[24..32].iter().fold(0, |acc, &x| (acc << 1) + x as u8);
+    // pub fn new(data: &[bool]) -> Self {
+    //     // The id is the first 16 bits as a u16
+    //     let id: u16 = data[0..16].iter().fold(0, |acc, &x| (acc << 1) + x as u16);
+    //     let channel = match (data[16], data[17], data[18], data[19]) {
+    //         (false, false, false, false) => Channel::Zero,
+    //         (false, false, false, true) => Channel::One,
+    //         (false, false, true, false) => Channel::Two,
+    //         any => panic!("Invalid channel {:?}", any),
+    //     };
+    //     let action = match (data[20], data[21], data[22], data[23]) {
+    //         (false, false, false, true) => Action::Shock,
+    //         (false, false, true, false) => Action::Vibrate,
+    //         (false, false, true, true) => Action::Beep,
+    //         any => panic!("Invalid action {:?}", any),
+    //     };
+    //     let intensity: u8 = data[24..32].iter().fold(0, |acc, &x| (acc << 1) + x as u8);
 
-        let checksum = checksum(data);
-        assert_eq!(&checksum, &data[32..40]);
-        Packet {
-            id,
-            channel,
-            action,
-            intensity,
-        }
-    }
+    //     let checksum = checksum(data);
+    //     assert_eq!(&checksum, &data[32..40]);
+    //     Packet {
+    //         id,
+    //         channel,
+    //         action,
+    //         intensity,
+    //     }
+    // }
 
     pub fn to_bits(&self) -> Vec<bool> {
         let mut bits = Vec::new();
@@ -135,51 +128,52 @@ impl Packet {
         //     print!("{}", if *bit { "1" } else { "0" });
         // }
         // println!();
-        return bits;
+        bits
     }
 
-    pub fn write(&self, writer: &mut BufWriter<File>) {
-        let bitstream = self.to_bits();
-        let samplerate = 20_000_000;
-        let micros_sync = 1400;
-        let micros_short = 250;
-        let micros_long = 750;
+    // pub fn write(&self, writer: &mut BufWriter<File>) {
+    //     let bitstream = self.to_bits();
+    //     let samplerate = 20_000_000;
+    //     let micros_sync = 1400;
+    //     let micros_short = 250;
+    //     let micros_long = 750;
 
-        let samples_sync = (micros_sync as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
-        let samples_short = (micros_short as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
-        let samples_long = (micros_long as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
+    //     let samples_sync = (micros_sync as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
+    //     let samples_short = (micros_short as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
+    //     let samples_long = (micros_long as f32 * (samplerate as f32 / 1_000_000.0)) as usize;
 
-        for _ in 0..samples_sync {
-            writer.write_all(&[1]).unwrap();
-        }
-        for _ in 0..samples_long {
-            writer.write_all(&[0]).unwrap();
-        }
+    //     for _ in 0..samples_sync {
+    //         writer.write_all(&[1]).unwrap();
+    //     }
+    //     for _ in 0..samples_long {
+    //         writer.write_all(&[0]).unwrap();
+    //     }
 
-        for bit in &bitstream {
-            if *bit {
-                for _ in 0..samples_long {
-                    writer.write_all(&[1]).unwrap();
-                }
-                for _ in 0..samples_short {
-                    writer.write_all(&[0]).unwrap();
-                }
-            } else {
-                for _ in 0..samples_short {
-                    writer.write_all(&[1]).unwrap();
-                }
-                for _ in 0..samples_long {
-                    writer.write_all(&[0]).unwrap();
-                }
-            }
-            // buf.write_all(&[if bit { 1 } else { 0 }]).unwrap();
-        }
-    }
+    //     for bit in &bitstream {
+    //         if *bit {
+    //             for _ in 0..samples_long {
+    //                 writer.write_all(&[1]).unwrap();
+    //             }
+    //             for _ in 0..samples_short {
+    //                 writer.write_all(&[0]).unwrap();
+    //             }
+    //         } else {
+    //             for _ in 0..samples_short {
+    //                 writer.write_all(&[1]).unwrap();
+    //             }
+    //             for _ in 0..samples_long {
+    //                 writer.write_all(&[0]).unwrap();
+    //             }
+    //         }
+    //         // buf.write_all(&[if bit { 1 } else { 0 }]).unwrap();
+    //     }
+    // }
 }
 
+// // Decoding main
 // fn main() {
 //     println!("Hello, world!");
-//     let mut file = File::open("/home/lennart/Documents/decoded.rec").unwrap();
+//     let mut file = File::open("./decoded.rec").unwrap();
 //     let mut buf = BufReader::new(file);
 //     let bytes = buf.bytes();
 
@@ -218,103 +212,109 @@ impl Packet {
 //     }
 // }
 
-fn main() {
-    println!("Hello, world!");
-    let file = File::create("/home/lennart/Documents/output.rec").unwrap();
-    let mut buf = BufWriter::new(file);
+// // Encoding main
+// fn main() {
+//     println!("Hello, world!");
+//     let file = File::create("./output.rec").unwrap();
+//     let mut buf = BufWriter::new(file);
 
-    // for x in 0..33 {
-    //     let packet = Packet {
-    //         id: 0b0010110010111110,
-    //         channel: Channel::Zero,
-    //         action: Action::Shock,
-    //         intensity: 1 + x * 3,
-    //     };
-    //     for _ in 0..50 {
-    //         packet.write(&mut buf);
-    //     }
-    //     let packet = Packet {
-    //         id: 0b0010110010111110,
-    //         channel: Channel::Zero,
-    //         action: Action::Beep,
-    //         intensity: 1 + x * 3,
-    //     };
-    //     for _ in 0..5 {
-    //         packet.write(&mut buf);
-    //     }
-    // }
+//     // for x in 0..33 {
+//     //     let packet = Packet {
+//     //         id: 0b0010110010111110,
+//     //         channel: Channel::Zero,
+//     //         action: Action::Shock,
+//     //         intensity: 1 + x * 3,
+//     //     };
+//     //     for _ in 0..50 {
+//     //         packet.write(&mut buf);
+//     //     }
+//     //     let packet = Packet {
+//     //         id: 0b0010110010111110,
+//     //         channel: Channel::Zero,
+//     //         action: Action::Beep,
+//     //         intensity: 1 + x * 3,
+//     //     };
+//     //     for _ in 0..5 {
+//     //         packet.write(&mut buf);
+//     //     }
+//     // }
 
-    // for x in 0..25 {
-    //     let packet = Packet {
-    //         id: 0b0010110010111110,
-    //         channel: Channel::Zero,
-    //         action: Action::Shock,
-    //         intensity: x,
-    //     };
-    //     for _ in 0..3 {
-    //         packet.write(&mut buf);
-    //     }
-    // }
+//     // for x in 0..25 {
+//     //     let packet = Packet {
+//     //         id: 0b0010110010111110,
+//     //         channel: Channel::Zero,
+//     //         action: Action::Shock,
+//     //         intensity: x,
+//     //     };
+//     //     for _ in 0..3 {
+//     //         packet.write(&mut buf);
+//     //     }
+//     // }
 
-    // let low_packet = Packet {
-    //     id: 0b0010110010111110,
-    //     channel: Channel::Zero,
-    //     action: Action::Shock,
-    //     intensity: 1,
-    // };
-    // let high_packet = Packet {
-    //     id: 0b0010110010111110,
-    //     channel: Channel::Zero,
-    //     action: Action::Shock,
-    //     intensity: 25,
-    // };
-    // for _ in 0..25 {
-    //     low_packet.write(&mut buf);
-    // }
-    // for _ in 0..1 {
-    //     high_packet.write(&mut buf);
-    // }
-    // for _ in 0..25 {
-    //     low_packet.write(&mut buf);
-    // }
+//     // let low_packet = Packet {
+//     //     id: 0b0010110010111110,
+//     //     channel: Channel::Zero,
+//     //     action: Action::Shock,
+//     //     intensity: 1,
+//     // };
+//     // let high_packet = Packet {
+//     //     id: 0b0010110010111110,
+//     //     channel: Channel::Zero,
+//     //     action: Action::Shock,
+//     //     intensity: 25,
+//     // };
+//     // for _ in 0..25 {
+//     //     low_packet.write(&mut buf);
+//     // }
+//     // for _ in 0..1 {
+//     //     high_packet.write(&mut buf);
+//     // }
+//     // for _ in 0..25 {
+//     //     low_packet.write(&mut buf);
+//     // }
 
-    buf.flush().unwrap();
+//     buf.flush().unwrap();
 
-    // for byte in bytes {
-    //     let byte = byte.unwrap();
-    //     let bit: bool = byte == 1;
-    //     if bit {
-    //         run_length += 1;
-    //         low_length = 0;
-    //     } else {
-    //         if run_length >= 6 && run_length <= 12 {
-    //             // print!("Low");
-    //             buffer.push(false);
-    //         }
-    //         if run_length >= 20 && run_length <= 32 {
-    //             buffer.push(true);
-    //         }
-    //         if run_length >= 38 && run_length <= 52 {
-    //             println!("Sync");
-    //             print!("Message: ");
-    //             for b in &buffer {
-    //                 print!("{}", if *b { "1" } else { "0" });
-    //             }
-    //             println!("");
+//     // for byte in bytes {
+//     //     let byte = byte.unwrap();
+//     //     let bit: bool = byte == 1;
+//     //     if bit {
+//     //         run_length += 1;
+//     //         low_length = 0;
+//     //     } else {
+//     //         if run_length >= 6 && run_length <= 12 {
+//     //             // print!("Low");
+//     //             buffer.push(false);
+//     //         }
+//     //         if run_length >= 20 && run_length <= 32 {
+//     //             buffer.push(true);
+//     //         }
+//     //         if run_length >= 38 && run_length <= 52 {
+//     //             println!("Sync");
+//     //             print!("Message: ");
+//     //             for b in &buffer {
+//     //                 print!("{}", if *b { "1" } else { "0" });
+//     //             }
+//     //             println!("");
 
-    //             buffer.clear();
-    //         }
+//     //             buffer.clear();
+//     //         }
 
-    //         low_length += 1;
-    //         run_length = 0;
-    //     }
-    // }
-}
+//     //         low_length += 1;
+//     //         run_length = 0;
+//     //     }
+//     // }
+// }
 
+// fn string_to_vec(s: &str) -> Vec<bool> {
+//     s.chars()
+//         .filter(|c| *c == '1' || *c == '0')
+//         .map(|c| c == '1')
+//         .collect()
+// }
 /// Test that the packet is correctly decoded and encoded
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_packet() {

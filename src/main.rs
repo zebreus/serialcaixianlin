@@ -1,32 +1,21 @@
 #![feature(str_from_raw_parts)]
-use core::str;
 use esp_idf_hal::{
     delay::FreeRtos,
     peripheral::Peripheral,
     prelude::Peripherals,
     rmt::{
         config::{CarrierConfig, DutyPercent},
-        FixedLengthSignal, PinState, Pulse, PulseTicks, Receive, RmtReceiveConfig,
-        RmtTransmitConfig, RxRmtDriver, Signal, TxRmtDriver, VariableLengthSignal,
+        FixedLengthSignal, PinState, Pulse, RmtTransmitConfig, TxRmtDriver,
     },
     units::Hertz,
 };
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
 use packet::{Action, Channel, Packet};
 use std::sync::{Mutex, RwLock};
-use std::{
-    cell::LazyCell,
-    io::BufRead,
-    sync::{Arc, LazyLock},
-    time::Duration,
-};
+use std::{sync::LazyLock, time::Duration};
 use {
-    esp_idf_sys::{esp, esp_vfs_dev_uart_use_driver, uart_driver_install, vTaskDelay},
-    std::{
-        io::{stdin, stdout, Write},
-        ptr::null_mut,
-        thread::spawn,
-    },
+    esp_idf_sys::{esp, esp_vfs_dev_uart_use_driver, uart_driver_install},
+    std::ptr::null_mut,
 };
 mod packet;
 
@@ -81,7 +70,7 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
     let zero_low =
         Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
 
-    return Mutex::new(Tx {
+    Mutex::new(Tx {
         tx,
         sync_high,
         sync_low,
@@ -89,7 +78,7 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
         one_low,
         zero_high,
         zero_low,
-    });
+    })
 });
 
 struct Config {
@@ -120,30 +109,16 @@ static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     let channel = Channel::from(channel);
     let action = Action::from(action);
 
-    return RwLock::new(Config {
-        id: id,
-        channel: channel,
-        intensity: intensity,
-        action: action,
-        nvs: nvs,
-    });
+    RwLock::new(Config {
+        id,
+        channel,
+        intensity,
+        action,
+        nvs,
+    })
 });
 
 impl Tx {
-    fn send_stream(&mut self, data: &[bool]) {
-        let mut signal = VariableLengthSignal::new();
-        signal.push(&[self.sync_high, self.sync_low]);
-
-        for (_, bit) in data.iter().enumerate() {
-            if *bit {
-                signal.push(&[self.one_high, self.one_low]);
-            } else {
-                signal.push(&[self.zero_high, self.zero_low]);
-            }
-        }
-        self.tx.start(signal).unwrap();
-    }
-
     fn send_packet(&mut self, packet: &Packet) {
         let mut signal = FixedLengthSignal::<{ 1 + (8 * 6) + 2 }>::new();
         signal.set(0, &(self.sync_high, self.sync_low)).unwrap();
@@ -195,7 +170,7 @@ fn process_command(command: String) {
             print_help();
         }
         ("id", id) => {
-            if id < 0 || id > 65535 {
+            if !(0..=65535).contains(&id) {
                 println!("ID must be between 0 and 65535");
                 return;
             }
@@ -204,7 +179,7 @@ fn process_command(command: String) {
             config.nvs.set_u16("id", id as u16).unwrap();
         }
         ("channel", channel) => {
-            if channel < 0 || channel > 2 {
+            if !(0..=2).contains(&channel) {
                 println!("Channel must be between 0 and 2");
                 return;
             }
@@ -213,7 +188,7 @@ fn process_command(command: String) {
             config.nvs.set_u8("channel", channel as u8).unwrap();
         }
         ("intensity", intensity) => {
-            if intensity < 0 || intensity > 100 {
+            if !(0..=100).contains(&intensity) {
                 println!("Intensity must be 100 or lower");
                 return;
             }
@@ -224,7 +199,7 @@ fn process_command(command: String) {
         ("vibrate", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if intensity < 0 || intensity > 100 {
+                if !(0..=100).contains(&intensity) {
                     println!("Intensity must be 100 or lower");
                     return;
                 }
@@ -237,7 +212,7 @@ fn process_command(command: String) {
         ("shock", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if intensity < 0 || intensity > 100 {
+                if !(0..=100).contains(&intensity) {
                     println!("Intensity must be 100 or lower");
                     return;
                 }
@@ -257,7 +232,7 @@ fn process_command(command: String) {
             config.action = Action::Light;
             config.nvs.set_u8("action", Action::Light as u8).unwrap();
         }
-        ("transmit", amount) => {
+        ("transmit", _) => {
             let config = CONFIG.read().unwrap();
 
             let packet = Packet {
