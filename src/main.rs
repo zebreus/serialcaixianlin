@@ -161,7 +161,7 @@ fn process_command(command: String) {
         split_command.next().unwrap_or(""),
         split_command
             .next()
-            .unwrap_or("")
+            .unwrap_or("-1")
             .parse::<i32>()
             .unwrap_or(-1),
     );
@@ -330,5 +330,6 @@ fn main() {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
+    println!("meow");
     interactive();
 }
