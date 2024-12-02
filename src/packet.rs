@@ -4,6 +4,7 @@ use std::{
 };
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Channel {
     Zero,
     One,
@@ -33,6 +34,7 @@ impl From<u8> for Action {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Action {
     Shock = 1,
     Vibrate = 2,

@@ -47,7 +47,6 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
     let mut peripherals = PERIPHERALS.lock().unwrap();
 
     let mut config = RmtTransmitConfig::new();
-    log::info!("Configuring RMT {:?}", config);
 
     let carrier_config = CarrierConfig::new()
         // .frequency(Hertz(1000))
@@ -67,13 +66,7 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
     )
     .unwrap();
 
-    log::info!("Configuring RMT {:?}", config);
-
-    log::info!("Hello, world!");
-
     let ticks_hz = tx.counter_clock().unwrap();
-
-    log::info!("tickshz {:?}", ticks_hz);
 
     let sync_high =
         Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1400)).unwrap();
@@ -174,10 +167,10 @@ impl Tx {
 
 fn print_help() {
     println!(
-        r#"
-Commands:
+        r#"Available commands:
+    help             : Print this help page
     id 0-65535       : Set the id of this transmitter
-    channel 0-3      : Set the channel of this transmitter
+    channel 0-2      : Set the channel of this transmitter
     shock [0-100]    : Set the command type to zapping
     vibrate [0-100]  : Set the command type to good vibrations
     beep             : Set the command type to make beepy noises
@@ -220,7 +213,7 @@ fn process_command(command: String) {
             config.nvs.set_u8("channel", channel as u8).unwrap();
         }
         ("intensity", intensity) => {
-            if intensity < 0 || intensity >= 100 {
+            if intensity < 0 || intensity > 100 {
                 println!("Intensity must be 100 or lower");
                 return;
             }
@@ -231,7 +224,7 @@ fn process_command(command: String) {
         ("vibrate", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if intensity < 0 || intensity >= 100 {
+                if intensity < 0 || intensity > 100 {
                     println!("Intensity must be 100 or lower");
                     return;
                 }
@@ -244,7 +237,7 @@ fn process_command(command: String) {
         ("shock", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if intensity < 0 || intensity >= 100 {
+                if intensity < 0 || intensity > 100 {
                     println!("Intensity must be 100 or lower");
                     return;
                 }
@@ -285,18 +278,64 @@ fn process_command(command: String) {
 fn interactive() {
     let mut buffer = String::new();
     loop {
-        FreeRtos::delay_ms(10);
-
         unsafe {
             let next = libc::getchar();
             if next != -1 {
                 let next_byte = char::from(next as u8);
+                if buffer.len() >= 100 {
+                    // https://mozz.us/ascii-art/2023-05-01/longcat.html
+                    println!(
+                        r#"Your command is too looooooooooong
+                           _     
+                 __       / |     
+                 \ "-..--'_4|_     
+      _._____     \ _  _(C "._'._     
+     ((^     '"-._( O_ O "._` '. \     
+      `"'--._     \  y_     \   \|     
+             '-._  \_ _  __.=-.__,\_     
+                 `'-(" ,("___       \,_____     
+                     (_,("___     .-./     '     
+                     |   C'___    (5)     
+                     /    ``  '---'-'._```     
+                    |     ```    |`    '"-._     
+                    |    ````    \-.`     
+                    |    ````    |  "._ ``     
+                    /    ````    |     '-.__     
+                   |     ```     |     
+                   |     ```     |     
+                   |     ```     |     
+                   |     ```     /     
+                   |    ````    |     
+                   |    ```     |     
+                   |    ```     /     
+                   |    ```     |     
+                   /    ```     |     
+                  |     ```     |     
+                  |     ```     !     
+                  |     ```    / '-.___     
+                  |    ````    !_      ''-     
+                  /   `   `    | '--._____)     
+                  |     /|     !     
+                  !    / |     /     
+                  |    | |    /     
+                  |    | |   /     
+                  |    / |   |     
+                  /   /  |   |     
+                 /   /   |   |     
+                (,,_]    (,_,)    mozz   "#
+                    );
+                    FreeRtos::delay_ms(1);
+                    buffer = String::new();
+                }
                 if next_byte != '\n' {
                     buffer.push(next_byte);
                     continue;
                 }
+                FreeRtos::delay_ms(1);
                 process_command(buffer);
                 buffer = String::new();
+            } else {
+                FreeRtos::delay_ms(1);
             }
         }
     }
