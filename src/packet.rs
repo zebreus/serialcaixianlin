@@ -3,17 +3,45 @@ use std::{
     io::{BufReader, BufWriter, Read, Write},
 };
 
+#[derive(Debug, Clone, Copy)]
 pub enum Channel {
     Zero,
     One,
     Two,
 }
 
+impl From<u8> for Channel {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Channel::Zero,
+            1 => Channel::One,
+            2 => Channel::Two,
+            _ => panic!("Invalid channel {}", value),
+        }
+    }
+}
+impl From<u8> for Action {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Action::Shock,
+            2 => Action::Vibrate,
+            3 => Action::Beep,
+            4 => Action::Light,
+            _ => panic!("Invalid action {}", value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Action {
     Shock = 1,
     Vibrate = 2,
     Beep = 3,
+    // Untested
+    Light = 4,
 }
+
+#[derive(Debug, Clone, Copy)]
 pub struct Packet {
     pub id: u16,
     pub channel: Channel,
@@ -91,6 +119,7 @@ impl Packet {
             Action::Shock => bits.extend_from_slice(&[false, false, false, true]),
             Action::Vibrate => bits.extend_from_slice(&[false, false, true, false]),
             Action::Beep => bits.extend_from_slice(&[false, false, true, true]),
+            Action::Light => bits.extend_from_slice(&[false, true, false, false]),
         }
         for i in (0..8).rev() {
             bits.push((self.intensity >> i) & 1 == 1);
