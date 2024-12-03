@@ -120,7 +120,7 @@ static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 
 impl Tx {
     fn send_packet(&mut self, packet: &Packet) {
-        let mut signal = FixedLengthSignal::<{ 1 + (8 * 6) + 2 }>::new();
+        let mut signal = FixedLengthSignal::<{ 1 + (8 * 5) + 3 }>::new();
         signal.set(0, &(self.sync_high, self.sync_low)).unwrap();
 
         let bits = packet.to_bits();
