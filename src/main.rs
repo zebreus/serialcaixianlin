@@ -177,8 +177,9 @@ fn process_command(command: String) {
             let mut config = CONFIG.write().unwrap();
             config.id = id as u16;
             config.nvs.set_u16("id", id as u16).unwrap();
+            println!("Setting ID to {}", id);
         }
-        ("channel", channel) => {
+        ("channel" | "c", channel) => {
             if !(0..=2).contains(&channel) {
                 println!("Channel must be between 0 and 2");
                 return;
@@ -186,8 +187,9 @@ fn process_command(command: String) {
             let mut config = CONFIG.write().unwrap();
             config.channel = Channel::from(channel as u8);
             config.nvs.set_u8("channel", channel as u8).unwrap();
+            println!("Setting channel to {}", channel);
         }
-        ("intensity", intensity) => {
+        ("intensity" | "i", intensity) => {
             if !(0..=100).contains(&intensity) {
                 println!("Intensity must be 100 or lower");
                 return;
@@ -195,8 +197,9 @@ fn process_command(command: String) {
             let mut config = CONFIG.write().unwrap();
             config.intensity = intensity as u8;
             config.nvs.set_u8("intensity", intensity as u8).unwrap();
+            println!("Setting intensity to {}", intensity);
         }
-        ("vibrate", intensity) => {
+        ("vibrate" | "v", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
                 if !(0..=100).contains(&intensity) {
@@ -208,8 +211,9 @@ fn process_command(command: String) {
             }
             config.action = Action::Vibrate;
             config.nvs.set_u8("action", Action::Vibrate as u8).unwrap();
+            println!("Setting action to vibrate {}", intensity);
         }
-        ("shock", intensity) => {
+        ("shock" | "s", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
                 if !(0..=100).contains(&intensity) {
@@ -221,18 +225,21 @@ fn process_command(command: String) {
             }
             config.action = Action::Shock;
             config.nvs.set_u8("action", Action::Shock as u8).unwrap();
+            println!("Setting action to shock {}", intensity);
         }
-        ("beep", _) => {
+        ("beep" | "b", _) => {
             let mut config = CONFIG.write().unwrap();
             config.action = Action::Beep;
             config.nvs.set_u8("action", Action::Beep as u8).unwrap();
+            println!("Setting action to beep");
         }
-        ("light", _) => {
+        ("light" | "l", _) => {
             let mut config = CONFIG.write().unwrap();
             config.action = Action::Light;
             config.nvs.set_u8("action", Action::Light as u8).unwrap();
+            println!("Setting action to light");
         }
-        ("transmit", _) => {
+        ("transmit" | "t", _) => {
             let config = CONFIG.read().unwrap();
 
             let packet = Packet {
@@ -241,6 +248,9 @@ fn process_command(command: String) {
                 action: config.action,
                 intensity: config.intensity,
             };
+
+            println!("Transmitting packet {:?}", packet);
+
             TX.lock().unwrap().send_packet(&packet);
         }
         _ => {
