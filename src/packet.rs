@@ -43,7 +43,7 @@ pub enum Action {
     Light = 4,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     pub id: u16,
     pub channel: Channel,
