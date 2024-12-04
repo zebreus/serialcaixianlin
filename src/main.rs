@@ -3,15 +3,15 @@ use esp_idf_hal::{
     delay::FreeRtos,
     peripheral::Peripheral,
     prelude::Peripherals,
-    rmt::{
-        config::{CarrierConfig, DutyPercent},
-        FixedLengthSignal, PinState, Pulse, RmtTransmitConfig, TxRmtDriver,
-    },
-    units::Hertz,
+    rmt::{FixedLengthSignal, PinState, Pulse, RmtTransmitConfig, TxRmtDriver},
 };
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
+use esp_idf_sys::rmt_register_tx_end_callback;
 use packet::{Action, Channel, Packet};
-use std::sync::{Mutex, RwLock};
+use std::{
+    collections::VecDeque,
+    sync::{Mutex, RwLock},
+};
 use std::{sync::LazyLock, time::Duration};
 use {
     esp_idf_sys::{esp, esp_vfs_dev_uart_use_driver, uart_driver_install},
@@ -37,14 +37,8 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
 
     let mut config = RmtTransmitConfig::new();
 
-    let carrier_config = CarrierConfig::new()
-        // .frequency(Hertz(1000))
-        .frequency(Hertz(1_000_000))
-        .duty_percent(DutyPercent::new(50).unwrap())
-        .carrier_level(PinState::Low);
-
     config = config
-        .carrier(Some(carrier_config))
+        .carrier(None)
         .clock_divider(10)
         .idle(Some(PinState::Low));
 
@@ -58,15 +52,17 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
     let ticks_hz = tx.counter_clock().unwrap();
 
     let sync_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1400)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1450)).unwrap();
     let sync_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(800)).unwrap();
+
     let one_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(750)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(800)).unwrap();
     let one_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(250)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(300)).unwrap();
+
     let zero_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(250)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(350)).unwrap();
     let zero_low =
         Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
 
@@ -80,6 +76,35 @@ static TX: LazyLock<Mutex<Tx>> = LazyLock::new(|| {
         zero_low,
     })
 });
+
+// TODO: Figure out a way to do this without global muts and race conditions.
+//       The first attempt resulted in deadlocks; the current attempt has ub
+static mut GLOBAL_TX: Option<&'static mut TxRmtDriver<'static>> = None;
+static mut QUEUE: VecDeque<FixedLengthSignal<{ 1 + (8 * 5) + 3 }>> = VecDeque::new();
+fn add_to_queue(tx: &mut TxRmtDriver<'static>, signal: FixedLengthSignal<{ 1 + (8 * 5) + 3 }>) {
+    unsafe {
+        let send_now = QUEUE.len() == 0;
+        QUEUE.push_back(signal.clone());
+
+        if send_now {
+            tx.start(signal).unwrap();
+        }
+    }
+}
+extern "C" fn tx_complete_callback(_channel: u32, _arg: *mut std::ffi::c_void) {
+    // let mut queue = QUEUE.write().unwrap();
+
+    unsafe {
+        QUEUE.pop_front();
+        if QUEUE.len() == 0 {
+            return;
+        }
+        let Some(tx) = &mut GLOBAL_TX else {
+            return;
+        };
+        tx.start(QUEUE.front().unwrap().clone()).unwrap();
+    }
+}
 
 struct Config {
     pub id: u16,
@@ -119,7 +144,7 @@ static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 });
 
 impl Tx {
-    fn send_packet(&mut self, packet: &Packet) {
+    fn send_packet(&mut self, packet: &Packet, amount: u32) {
         let mut signal = FixedLengthSignal::<{ 1 + (8 * 5) + 3 }>::new();
         signal.set(0, &(self.sync_high, self.sync_low)).unwrap();
 
@@ -136,7 +161,11 @@ impl Tx {
                     .unwrap();
             }
         }
-        self.tx.start(signal).unwrap();
+
+        for _ in 0..(amount - 1) {
+            add_to_queue(&mut self.tx, signal.clone());
+        }
+        add_to_queue(&mut self.tx, signal);
     }
 }
 
@@ -239,7 +268,7 @@ fn process_command(command: String) {
             config.nvs.set_u8("action", Action::Light as u8).unwrap();
             println!("Setting action to light");
         }
-        ("transmit" | "t", _) => {
+        ("transmit" | "t", amount) => {
             let config = CONFIG.read().unwrap();
 
             let packet = Packet {
@@ -251,7 +280,7 @@ fn process_command(command: String) {
 
             println!("Transmitting packet {:?}", packet);
 
-            TX.lock().unwrap().send_packet(&packet);
+            TX.lock().unwrap().send_packet(&packet, amount as u32);
         }
         _ => {
             println!("Unknown command {}", command);
@@ -262,6 +291,27 @@ fn process_command(command: String) {
 
 fn interactive() {
     let mut buffer = String::new();
+    {
+        // This is a bad idea and belongs somewhere else
+        let mut tx = TX.lock().unwrap();
+        let locked_mutex: &mut TxRmtDriver<'static> = &mut tx.tx;
+        let ptr = unsafe {
+            std::mem::transmute::<_, *mut TxRmtDriver<'static>>(
+                locked_mutex as *mut TxRmtDriver<'static>,
+            )
+        };
+        let ptr = unsafe { std::mem::transmute::<_, *mut std::ffi::c_void>(ptr) };
+        let ptr = unsafe { std::mem::transmute::<_, *mut TxRmtDriver<'static>>(ptr) };
+        let unptr = unsafe { &mut *ptr };
+
+        unsafe {
+            GLOBAL_TX = Some(unptr);
+        }
+
+        unsafe {
+            rmt_register_tx_end_callback(Some(tx_complete_callback), null_mut());
+        }
+    }
     loop {
         unsafe {
             let next = libc::getchar();
