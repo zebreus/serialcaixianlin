@@ -195,7 +195,6 @@ fn process_command(command: String, queue_packet: &Sender<Packet>, abort: &Recei
                     config.nvs.set_u8("intensity", capped_intensity).unwrap();
                 }
             }
-            let mut config = CONFIG.write().unwrap();
             config.action = Action::Light;
             config.nvs.set_u8("action", Action::Light as u8).unwrap();
             println!("Setting action to light {}", config.intensity);
