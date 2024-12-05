@@ -225,7 +225,7 @@ static PULSES: LazyLock<Pulses> = LazyLock::new(|| {
     let ticks_hz = TX.lock().unwrap().counter_clock().unwrap();
 
     let sync_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1450)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1400)).unwrap();
     let sync_low =
         Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(800)).unwrap();
 
@@ -235,9 +235,9 @@ static PULSES: LazyLock<Pulses> = LazyLock::new(|| {
         Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(300)).unwrap();
 
     let zero_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(350)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(300)).unwrap();
     let zero_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(800)).unwrap();
 
     Pulses {
         sync_high,
