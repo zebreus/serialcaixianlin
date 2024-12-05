@@ -79,6 +79,7 @@ fn print_help() {
                         toggled when a light command with a different intensity
                         then the last light command is sent
     transmit [1-1000] : Transmit the configured command the given amount (default 4)
+    find [1-200]      : Make noise and flash for a given number of flashes (default 10)
     abort             : Stop any ongoing transmission
     "#
     );
@@ -206,6 +207,68 @@ fn process_command(command: String, queue_packet: &Sender<Packet>, abort: &Recei
                 return;
             }
             let config = CONFIG.read().unwrap();
+
+            let packet = Packet {
+                id: config.id,
+                channel: config.channel,
+                action: config.action,
+                intensity: config.intensity,
+            };
+
+            println!("Transmitting packet {:?}", packet);
+
+            for _ in 0..(amount.saturating_sub(1)) {
+                queue_packet.send(packet.clone()).unwrap();
+            }
+            if amount != 0 {
+                queue_packet.send(packet).unwrap();
+            }
+        }
+        ("find", amount) => {
+            let amount = if amount == -1 { 10 } else { amount };
+            if amount < 0 || amount > 200 {
+                println!("Find beeps must be between 0 and 200");
+                return;
+            }
+            let config = CONFIG.read().unwrap();
+            for _ in 0..amount {
+                for _ in 0..3 {
+                    let packet = Packet {
+                        id: config.id,
+                        channel: config.channel,
+                        action: Action::Light,
+                        intensity: 1,
+                    };
+                    queue_packet.send(packet).unwrap();
+                }
+                for _ in 0..4 {
+                    let packet = Packet {
+                        id: config.id,
+                        channel: config.channel,
+                        action: Action::Beep,
+                        intensity: 0,
+                    };
+                    queue_packet.send(packet).unwrap();
+                }
+                for _ in 0..3 {
+                    let packet = Packet {
+                        id: config.id,
+                        channel: config.channel,
+                        action: Action::Light,
+                        intensity: 0,
+                    };
+                    queue_packet.send(packet).unwrap();
+                }
+                for _ in 0..4 {
+                    let packet = Packet {
+                        id: config.id,
+                        channel: config.channel,
+                        action: Action::Beep,
+                        intensity: 0,
+                    };
+                    queue_packet.send(packet).unwrap();
+                }
+            }
 
             let packet = Packet {
                 id: config.id,
