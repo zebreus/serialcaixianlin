@@ -224,7 +224,7 @@ fn process_command(command: String, queue_packet: &Sender<Packet>, abort: &Recei
                 queue_packet.send(packet).unwrap();
             }
         }
-        ("abort", _) => {
+        ("abort" | "a", _) => {
             println!("Aborting transmission");
             // Drain the receiver
             while abort.try_recv().is_ok() {}
