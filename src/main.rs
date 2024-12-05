@@ -64,7 +64,7 @@ extern "C" fn tx_complete_callback(_channel: u32, _arg: *mut std::ffi::c_void) {
 }
 
 fn print_help() {
-    // Light is
+    // Light may go up to 255
     println!(
         r#"Available commands:
     help              : Print this help page
@@ -75,9 +75,9 @@ fn print_help() {
     vibrate [0-99]    : Set the command type to good vibrations with the given
                         intensity
     beep              : Set the command type to make beepy noises
-    light             : Set the command type to enable the light. Light is
-                        toggled when a command with a different intensity then
-                        the last light command is sent
+    light [0-99]      : Set the command type to enable the light. Light is
+                        toggled when a light command with a different intensity
+                        then the last light command is sent
     transmit [1-1000] : Transmit the configured command the given amount (default 4)
     abort             : Stop any ongoing transmission
     "#
@@ -179,11 +179,26 @@ fn process_command(command: String, queue_packet: &Sender<Packet>, abort: &Recei
             config.nvs.set_u8("action", Action::Beep as u8).unwrap();
             println!("Setting action to beep");
         }
-        ("light" | "l", _) => {
+        ("light" | "l", intensity) => {
+            let mut config = CONFIG.write().unwrap();
+            if intensity != -1 {
+                if intensity < 0 {
+                    println!("Intensities lower than 0 are considered 0");
+                }
+                if intensity >= 100 {
+                    println!("Intensities greater than 99 are clamped to 99");
+                }
+                // Intensities below 0 and above 99 do nothing, so we clamp them
+                let capped_intensity = intensity.clamp(0, 99) as u8;
+                if capped_intensity != config.intensity {
+                    config.intensity = capped_intensity;
+                    config.nvs.set_u8("intensity", capped_intensity).unwrap();
+                }
+            }
             let mut config = CONFIG.write().unwrap();
             config.action = Action::Light;
             config.nvs.set_u8("action", Action::Light as u8).unwrap();
-            println!("Setting action to light");
+            println!("Setting action to light {}", config.intensity);
         }
         ("transmit" | "t", amount) => {
             let amount = if amount == -1 { 4 } else { amount };
