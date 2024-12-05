@@ -9,9 +9,10 @@ use esp_idf_hal::{
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
 use esp_idf_sys::rmt_register_tx_end_callback;
 use packet::{Action, Channel, Packet};
-use std::{
-    collections::VecDeque,
-    sync::{Mutex, RwLock},
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::Sender,
+    Mutex, RwLock,
 };
 use std::{sync::LazyLock, time::Duration};
 use {
@@ -20,141 +21,12 @@ use {
 };
 mod packet;
 
-struct Pulses {
-    pub sync_high: Pulse,
-    pub sync_low: Pulse,
-    pub one_high: Pulse,
-    pub one_low: Pulse,
-    pub zero_high: Pulse,
-    pub zero_low: Pulse,
-}
-
-static PERIPHERALS: LazyLock<Mutex<Peripherals>> =
-    LazyLock::new(|| Mutex::new(Peripherals::take().unwrap()));
-
-static PULSES: LazyLock<Pulses> = LazyLock::new(|| {
-    let ticks_hz = TX_MUTEX.lock().unwrap().counter_clock().unwrap();
-
-    let sync_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1450)).unwrap();
-    let sync_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(800)).unwrap();
-
-    let one_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(800)).unwrap();
-    let one_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(300)).unwrap();
-
-    let zero_high =
-        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(350)).unwrap();
-    let zero_low =
-        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
-
-    Pulses {
-        sync_high,
-        sync_low,
-        one_high,
-        one_low,
-        zero_high,
-        zero_low,
-    }
-});
-static TX_MUTEX: LazyLock<Mutex<TxRmtDriver<'static>>> = LazyLock::new(|| {
-    let mut peripherals = PERIPHERALS.lock().unwrap();
-
-    let mut config = RmtTransmitConfig::new();
-
-    config = config
-        .carrier(None)
-        .clock_divider(10)
-        .idle(Some(PinState::Low));
-
-    let tx = TxRmtDriver::new(
-        unsafe { peripherals.rmt.channel1.clone_unchecked() },
-        unsafe { peripherals.pins.gpio0.clone_unchecked() },
-        &config,
-    )
-    .unwrap();
-
-    Mutex::new(tx)
-});
-
-// TODO: Figure out a way to do this without global muts and race conditions.
-//       The first attempt resulted in deadlocks; the current attempt has ub
-static mut QUEUE: VecDeque<Packet> = VecDeque::new();
-// Super-unsafe way to access a global mutable ref to tx
-static mut TX: LazyLock<&mut TxRmtDriver<'static>> = LazyLock::new(|| {
-    let mut tx = TX_MUTEX.lock().unwrap();
-    let locked_mutex: &mut TxRmtDriver<'static> = &mut tx;
-    let ptr = unsafe {
-        std::mem::transmute::<_, *mut TxRmtDriver<'static>>(
-            locked_mutex as *mut TxRmtDriver<'static>,
-        )
-    };
-    let ptr = unsafe { std::mem::transmute::<_, *mut std::ffi::c_void>(ptr) };
-    let ptr = unsafe { std::mem::transmute::<_, *mut TxRmtDriver<'static>>(ptr) };
-    let unptr = unsafe { &mut *ptr };
-
-    unsafe {
-        rmt_register_tx_end_callback(Some(tx_complete_callback), null_mut());
-    }
-
-    unptr
-});
-fn add_to_queue(packet: Packet) {
-    unsafe {
-        let send_now = QUEUE.len() == 0;
-        if send_now {
-            let signal = packet_to_signal(&packet);
-            QUEUE.push_back(packet);
-            let tx = LazyLock::get_mut(&mut TX).unwrap();
-            tx.start(signal).unwrap();
-        } else {
-            QUEUE.push_back(packet);
-        }
-    }
-}
-extern "C" fn tx_complete_callback(_channel: u32, _arg: *mut std::ffi::c_void) {
-    // let mut queue = QUEUE.write().unwrap();
-
-    unsafe {
-        // Remove the currently send element
-        QUEUE.pop_front();
-        let Some(next) = QUEUE.front() else {
-            return;
-        };
-        let tx = LazyLock::get_mut(&mut TX).unwrap();
-        tx.start(packet_to_signal(next)).unwrap();
-    }
-}
-
-fn packet_to_signal(packet: &Packet) -> FixedLengthSignal<{ 1 + (8 * 5) + 3 }> {
-    let mut signal = FixedLengthSignal::<{ 1 + (8 * 5) + 3 }>::new();
-    signal.set(0, &(PULSES.sync_high, PULSES.sync_low)).unwrap();
-
-    let bits = packet.to_bits();
-
-    for (index, bit) in bits.iter().enumerate() {
-        if *bit {
-            signal
-                .set(1 + index, &(PULSES.one_high, PULSES.one_low))
-                .unwrap();
-        } else {
-            signal
-                .set(1 + index, &(PULSES.zero_high, PULSES.zero_low))
-                .unwrap();
-        }
-    }
-
-    return signal;
-}
-
 struct Config {
     pub id: u16,
     pub channel: Channel,
     pub intensity: u8,
     pub action: Action,
-    pub nvs: EspNvs<NvsDefault>,
+    nvs: EspNvs<NvsDefault>,
 }
 static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     let nvs_default_partition: EspNvsPartition<NvsDefault> =
@@ -186,22 +58,27 @@ static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     })
 });
 
+static SENDING: AtomicBool = AtomicBool::new(false);
+extern "C" fn tx_complete_callback(_channel: u32, _arg: *mut std::ffi::c_void) {
+    SENDING.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn print_help() {
     println!(
         r#"Available commands:
-    help             : Print this help page
-    id 0-65535       : Set the id of this transmitter
-    channel 0-2      : Set the channel of this transmitter
-    shock [0-100]    : Set the command type to zapping
-    vibrate [0-100]  : Set the command type to good vibrations
-    beep             : Set the command type to make beepy noises
-    light            : Set the command type to enable the light
-    transmit [0-255] : Transmit the configured command the given amount
-    abort            : Stop any ongoing transmission
+    help              : Print this help page
+    id 0-65535        : Set the id of this transmitter
+    channel 0-2       : Set the channel of this transmitter
+    shock [0-100]     : Set the command type to zapping
+    vibrate [0-100]   : Set the command type to good vibrations
+    beep              : Set the command type to make beepy noises
+    light             : Set the command type to enable the light
+    transmit [0-1000] : Transmit the configured command the given amount
+    abort             : Stop any ongoing transmission
     "#
     );
 }
-fn process_command(command: String) {
+fn process_command(command: String, queue_packet: &Sender<Packet>) {
     let mut split_command = command.split(" ");
     let args = (
         split_command.next().unwrap_or(""),
@@ -286,6 +163,10 @@ fn process_command(command: String) {
             println!("Setting action to light");
         }
         ("transmit" | "t", amount) => {
+            if amount < 0 || amount > 65535 {
+                println!("Amount must be between 0 and 65535");
+                return;
+            }
             let config = CONFIG.read().unwrap();
 
             let packet = Packet {
@@ -297,8 +178,11 @@ fn process_command(command: String) {
 
             println!("Transmitting packet {:?}", packet);
 
-            for _ in 0..amount {
-                add_to_queue(packet.clone());
+            for _ in 0..(amount.saturating_sub(1)) {
+                queue_packet.send(packet.clone()).unwrap();
+            }
+            if amount != 0 {
+                queue_packet.send(packet).unwrap();
             }
         }
         _ => {
@@ -308,17 +192,101 @@ fn process_command(command: String) {
     }
 }
 
+static TX: LazyLock<Mutex<TxRmtDriver<'static>>> = LazyLock::new(|| {
+    let mut peripherals = Peripherals::take().unwrap();
+
+    let mut config = RmtTransmitConfig::new();
+
+    config = config
+        .carrier(None)
+        .clock_divider(10)
+        .idle(Some(PinState::Low));
+
+    let tx = TxRmtDriver::new(
+        unsafe { peripherals.rmt.channel1.clone_unchecked() },
+        unsafe { peripherals.pins.gpio0.clone_unchecked() },
+        &config,
+    )
+    .unwrap();
+
+    Mutex::new(tx)
+});
+
+struct Pulses {
+    pub sync_high: Pulse,
+    pub sync_low: Pulse,
+    pub one_high: Pulse,
+    pub one_low: Pulse,
+    pub zero_high: Pulse,
+    pub zero_low: Pulse,
+}
+
+static PULSES: LazyLock<Pulses> = LazyLock::new(|| {
+    let ticks_hz = TX.lock().unwrap().counter_clock().unwrap();
+
+    let sync_high =
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(1450)).unwrap();
+    let sync_low =
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(800)).unwrap();
+
+    let one_high =
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(800)).unwrap();
+    let one_low =
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(300)).unwrap();
+
+    let zero_high =
+        Pulse::new_with_duration(ticks_hz, PinState::High, &Duration::from_micros(350)).unwrap();
+    let zero_low =
+        Pulse::new_with_duration(ticks_hz, PinState::Low, &Duration::from_micros(750)).unwrap();
+
+    Pulses {
+        sync_high,
+        sync_low,
+        one_high,
+        one_low,
+        zero_high,
+        zero_low,
+    }
+});
+
+fn packet_to_signal(packet: &Packet) -> FixedLengthSignal<{ 1 + (8 * 5) + 3 }> {
+    let mut signal = FixedLengthSignal::<{ 1 + (8 * 5) + 3 }>::new();
+    signal.set(0, &(PULSES.sync_high, PULSES.sync_low)).unwrap();
+    let bits = packet.to_bits();
+    for (index, bit) in bits.iter().enumerate() {
+        if *bit {
+            signal
+                .set(1 + index, &(PULSES.one_high, PULSES.one_low))
+                .unwrap();
+        } else {
+            signal
+                .set(1 + index, &(PULSES.zero_high, PULSES.zero_low))
+                .unwrap();
+        }
+    }
+    return signal;
+}
+
 fn interactive() {
     let mut buffer = String::new();
+
+    LazyLock::force(&CONFIG);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Start the tx loop
+
+    unsafe {
+        rmt_register_tx_end_callback(Some(tx_complete_callback), null_mut());
+    }
     loop {
-        unsafe {
-            let next = libc::getchar();
-            if next != -1 {
-                let next_byte = char::from(next as u8);
-                if buffer.len() >= 100 {
-                    // https://mozz.us/ascii-art/2023-05-01/longcat.html
-                    println!(
-                        r#"Your command is too looooooooooong
+        // This is the only reliable way to read a single character from stdin I found
+        let next = unsafe { libc::getchar() };
+        if next != -1 {
+            let next_byte = char::from(next as u8);
+            if buffer.len() >= 100 {
+                // https://mozz.us/ascii-art/2023-05-01/longcat.html
+                println!(
+                    r#"Your command is too looooooooooong
                            _     
                  __       / |     
                  \ "-..--'_4|_     
@@ -356,20 +324,27 @@ fn interactive() {
                   /   /  |   |     
                  /   /   |   |     
                 (,,_]    (,_,)    mozz   "#
-                    );
-                    FreeRtos::delay_ms(1);
-                    buffer = String::new();
-                }
-                if next_byte != '\n' {
-                    buffer.push(next_byte);
-                    continue;
-                }
+                );
                 FreeRtos::delay_ms(1);
-                process_command(buffer);
                 buffer = String::new();
-            } else {
-                FreeRtos::delay_ms(1);
             }
+            if next_byte != '\n' {
+                buffer.push(next_byte);
+                continue;
+            }
+            process_command(buffer, &tx);
+            buffer = String::new();
+        }
+        FreeRtos::delay_ms(1);
+
+        if SENDING.load(Ordering::Relaxed) == false {
+            // Remove the currently send element
+            let Ok(next) = rx.try_recv() else {
+                continue;
+            };
+            SENDING.store(true, Ordering::Relaxed);
+            let signal = packet_to_signal(&next);
+            TX.lock().unwrap().start(signal).unwrap();
         }
     }
 }
