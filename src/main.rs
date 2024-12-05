@@ -11,7 +11,7 @@ use esp_idf_sys::rmt_register_tx_end_callback;
 use packet::{Action, Channel, Packet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc::Sender,
+    mpsc::{Receiver, Sender},
     Mutex, RwLock,
 };
 use std::{sync::LazyLock, time::Duration};
@@ -64,21 +64,26 @@ extern "C" fn tx_complete_callback(_channel: u32, _arg: *mut std::ffi::c_void) {
 }
 
 fn print_help() {
+    // Light is
     println!(
         r#"Available commands:
     help              : Print this help page
     id 0-65535        : Set the id of this transmitter
     channel 0-2       : Set the channel of this transmitter
-    shock [0-100]     : Set the command type to zapping
-    vibrate [0-100]   : Set the command type to good vibrations
+    intensity 0-99    : Set the intensity of the command
+    shock [0-99]      : Set the command type to zapping with the given intensity
+    vibrate [0-99]    : Set the command type to good vibrations with the given
+                        intensity
     beep              : Set the command type to make beepy noises
-    light             : Set the command type to enable the light
-    transmit [0-1000] : Transmit the configured command the given amount
+    light             : Set the command type to enable the light. Light is
+                        toggled when a command with a different intensity then
+                        the last light command is sent
+    transmit [1-1000] : Transmit the configured command the given amount (default 4)
     abort             : Stop any ongoing transmission
     "#
     );
 }
-fn process_command(command: String, queue_packet: &Sender<Packet>) {
+fn process_command(command: String, queue_packet: &Sender<Packet>, abort: &Receiver<Packet>) {
     let mut split_command = command.split(" ");
     let args = (
         split_command.next().unwrap_or(""),
@@ -113,42 +118,60 @@ fn process_command(command: String, queue_packet: &Sender<Packet>) {
             println!("Setting channel to {}", channel);
         }
         ("intensity" | "i", intensity) => {
-            if !(0..=100).contains(&intensity) {
-                println!("Intensity must be 100 or lower");
-                return;
+            if intensity < 0 {
+                println!("Intensities lower than 0 are considered 0");
             }
+            if intensity >= 100 {
+                println!("Intensities greater than 99 are clamped to 99");
+            }
+            // Intensities below 0 and above 99 do nothing, so we clamp them
+            let capped_intensity = intensity.clamp(0, 99) as u8;
             let mut config = CONFIG.write().unwrap();
-            config.intensity = intensity as u8;
-            config.nvs.set_u8("intensity", intensity as u8).unwrap();
-            println!("Setting intensity to {}", intensity);
+            if capped_intensity != config.intensity {
+                config.intensity = capped_intensity;
+                config.nvs.set_u8("intensity", capped_intensity).unwrap();
+            }
+            println!("Setting intensity to {}", capped_intensity);
         }
         ("vibrate" | "v", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if !(0..=100).contains(&intensity) {
-                    println!("Intensity must be 100 or lower");
-                    return;
+                if intensity < 0 {
+                    println!("Intensities lower than 0 are considered 0");
                 }
-                config.intensity = intensity as u8;
-                config.nvs.set_u8("intensity", intensity as u8).unwrap();
+                if intensity >= 100 {
+                    println!("Intensities greater than 99 are clamped to 99");
+                }
+                // Intensities below 0 and above 99 do nothing, so we clamp them
+                let capped_intensity = intensity.clamp(0, 99) as u8;
+                if capped_intensity != config.intensity {
+                    config.intensity = capped_intensity;
+                    config.nvs.set_u8("intensity", capped_intensity).unwrap();
+                }
             }
             config.action = Action::Vibrate;
             config.nvs.set_u8("action", Action::Vibrate as u8).unwrap();
-            println!("Setting action to vibrate {}", intensity);
+            println!("Setting action to vibrate {}", config.intensity);
         }
         ("shock" | "s", intensity) => {
             let mut config = CONFIG.write().unwrap();
             if intensity != -1 {
-                if !(0..=100).contains(&intensity) {
-                    println!("Intensity must be 100 or lower");
-                    return;
+                if intensity < 0 {
+                    println!("Intensities lower than 0 are considered 0");
                 }
-                config.intensity = intensity as u8;
-                config.nvs.set_u8("intensity", intensity as u8).unwrap();
+                if intensity >= 100 {
+                    println!("Intensities greater than 99 are clamped to 99");
+                }
+                // Intensities below 0 and above 99 do nothing, so we clamp them
+                let capped_intensity = intensity.clamp(0, 99) as u8;
+                if capped_intensity != config.intensity {
+                    config.intensity = capped_intensity;
+                    config.nvs.set_u8("intensity", capped_intensity).unwrap();
+                }
             }
             config.action = Action::Shock;
             config.nvs.set_u8("action", Action::Shock as u8).unwrap();
-            println!("Setting action to shock {}", intensity);
+            println!("Setting action to shock {}", config.intensity);
         }
         ("beep" | "b", _) => {
             let mut config = CONFIG.write().unwrap();
@@ -163,6 +186,7 @@ fn process_command(command: String, queue_packet: &Sender<Packet>) {
             println!("Setting action to light");
         }
         ("transmit" | "t", amount) => {
+            let amount = if amount == -1 { 4 } else { amount };
             if amount < 0 || amount > 65535 {
                 println!("Amount must be between 0 and 65535");
                 return;
@@ -184,6 +208,11 @@ fn process_command(command: String, queue_packet: &Sender<Packet>) {
             if amount != 0 {
                 queue_packet.send(packet).unwrap();
             }
+        }
+        ("abort", _) => {
+            println!("Aborting transmission");
+            // Drain the receiver
+            while abort.try_recv().is_ok() {}
         }
         _ => {
             println!("Unknown command {}", command);
@@ -332,7 +361,7 @@ fn interactive() {
                 buffer.push(next_byte);
                 continue;
             }
-            process_command(buffer, &tx);
+            process_command(buffer, &tx, &rx);
             buffer = String::new();
         }
         FreeRtos::delay_ms(1);
