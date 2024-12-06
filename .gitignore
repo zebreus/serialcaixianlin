@@ -1,5 +1,4 @@
 # ignore rust stuff
-Cargo.lock
 target/
 
 # ignore ide stuff
