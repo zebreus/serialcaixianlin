@@ -358,7 +358,7 @@ static PULSES: LazyLock<Pulses> = LazyLock::new(|| {
 fn packet_to_signal(packet: &Packet) -> FixedLengthSignal<{ 1 + (8 * 5) + 3 }> {
     let mut signal = FixedLengthSignal::<{ 1 + (8 * 5) + 3 }>::new();
     signal.set(0, &(PULSES.sync_high, PULSES.sync_low)).unwrap();
-    let bits = packet.to_bits();
+    let bits: Vec<bool> = packet.clone().into(); // FIXME: no clone()
     for (index, bit) in bits.iter().enumerate() {
         if *bit {
             signal
@@ -393,42 +393,42 @@ fn interactive() {
                 // https://mozz.us/ascii-art/2023-05-01/longcat.html
                 println!(
                     r#"Your command is too looooooooooong
-                           _     
-                 __       / |     
-                 \ "-..--'_4|_     
-      _._____     \ _  _(C "._'._     
-     ((^     '"-._( O_ O "._` '. \     
-      `"'--._     \  y_     \   \|     
-             '-._  \_ _  __.=-.__,\_     
-                 `'-(" ,("___       \,_____     
-                     (_,("___     .-./     '     
-                     |   C'___    (5)     
-                     /    ``  '---'-'._```     
-                    |     ```    |`    '"-._     
-                    |    ````    \-.`     
-                    |    ````    |  "._ ``     
-                    /    ````    |     '-.__     
-                   |     ```     |     
-                   |     ```     |     
-                   |     ```     |     
-                   |     ```     /     
-                   |    ````    |     
-                   |    ```     |     
-                   |    ```     /     
-                   |    ```     |     
-                   /    ```     |     
-                  |     ```     |     
-                  |     ```     !     
-                  |     ```    / '-.___     
-                  |    ````    !_      ''-     
-                  /   `   `    | '--._____)     
-                  |     /|     !     
-                  !    / |     /     
-                  |    | |    /     
-                  |    | |   /     
-                  |    / |   |     
-                  /   /  |   |     
-                 /   /   |   |     
+                           _
+                 __       / |
+                 \ "-..--'_4|_
+      _._____     \ _  _(C "._'._
+     ((^     '"-._( O_ O "._` '. \
+      `"'--._     \  y_     \   \|
+             '-._  \_ _  __.=-.__,\_
+                 `'-(" ,("___       \,_____
+                     (_,("___     .-./     '
+                     |   C'___    (5)
+                     /    ``  '---'-'._```
+                    |     ```    |`    '"-._
+                    |    ````    \-.`
+                    |    ````    |  "._ ``
+                    /    ````    |     '-.__
+                   |     ```     |
+                   |     ```     |
+                   |     ```     |
+                   |     ```     /
+                   |    ````    |
+                   |    ```     |
+                   |    ```     /
+                   |    ```     |
+                   /    ```     |
+                  |     ```     |
+                  |     ```     !
+                  |     ```    / '-.___
+                  |    ````    !_      ''-
+                  /   `   `    | '--._____)
+                  |     /|     !
+                  !    / |     /
+                  |    | |    /
+                  |    | |   /
+                  |    / |   |
+                  /   /  |   |
+                 /   /   |   |
                 (,,_]    (,_,)    mozz   "#
                 );
                 FreeRtos::delay_ms(1);
@@ -469,6 +469,6 @@ fn main() {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    println!("meow");
+    println!("meow :3 arf~");
     interactive();
 }
