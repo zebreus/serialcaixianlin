@@ -34,9 +34,6 @@ pub struct State {
     /// Action to perform
     pub action: Action,
 
-    /// Last light
-    pub last_light_state: bool,
-
     /// Storage partition
     nvs: EspNvs<NvsDefault>,
 }
@@ -60,7 +57,6 @@ impl State {
             channel,
             intensity,
             action,
-            last_light_state: false,
             nvs,
         }
     }
@@ -154,26 +150,9 @@ pub fn process_command(command: &String, state: &mut State, queue: &Queue) {
         }
 
         ("light" | "l", _) => {
-            // build packet
-            let intensity = if state.last_light_state { 96 } else { 97 };
-            state.last_light_state = !state.last_light_state;
-
-            let packet = Packet {
-                id: state.id,
-                channel: state.channel,
-                action: Action::Light,
-                intensity,
-            };
-
-            // send packet
-            println!(
-                "Sending light toggle to shocker {} on channel {:?}",
-                state.id, state.channel
-            );
-            let encoded: Vec<bool> = packet.into();
-            for _ in 0..4 {
-                queue.send(encoded.clone());
-            }
+            state.action = Action::Light;
+            state.store();
+            println!("Setting action to light");
         }
 
         ("transmit" | "t", amount) => {
@@ -197,7 +176,7 @@ pub fn process_command(command: &String, state: &mut State, queue: &Queue) {
                 "Sending {:?} to shocker {} on channel {:?} with intensity {}",
                 state.action, state.id, state.channel, state.intensity
             );
-            let encoded: Vec<bool> = packet.into();
+            let encoded: Vec<bool> = (&packet).into();
             for _ in 0..amount {
                 queue.send(encoded.clone());
             }

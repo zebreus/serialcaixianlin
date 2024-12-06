@@ -5,15 +5,10 @@ use esp_idf_hal::{
 };
 use esp_idf_sys::rmt_register_tx_end_callback;
 use std::{
-    sync::{
+    ptr::null_mut, sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
-    },
-    time::Duration,
-};
-use {
-    esp_idf_sys::{esp, esp_vfs_dev_uart_use_driver, uart_driver_install},
-    std::ptr::null_mut,
+    }, time::Duration
 };
 
 /// Atomic boolean tracking whether the transmitter is currently transmitting.
@@ -37,7 +32,15 @@ pub struct Queue {
 
 impl Queue {
     /// Create a new queue.
-    fn new() -> Self {
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if executed more than once!
+    ///
+    pub unsafe fn new() -> Self {
+        // register the transmit finish callback
+        rmt_register_tx_end_callback(Some(transmit_finish), null_mut());
+
         // create channels
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -138,20 +141,3 @@ impl Pulses {
     }
 }
 
-/// Initialize the transmitter.
-pub unsafe fn init() -> Queue {
-    // setup the peripherals
-    esp_idf_svc::sys::link_patches();
-
-    esp!(uart_driver_install(0, 512, 512, 10, null_mut(), 0)).unwrap();
-    esp_vfs_dev_uart_use_driver(0);
-
-    // setup the logger
-    esp_idf_svc::log::EspLogger::initialize_default();
-
-    // register the transmit finish callback
-    rmt_register_tx_end_callback(Some(transmit_finish), null_mut());
-
-    // create queues for the transmitter
-    Queue::new()
-}

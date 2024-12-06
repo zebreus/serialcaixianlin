@@ -1,12 +1,3 @@
-// signal to the collar:
-// [PREFIX        ] = SYNC
-// [TRANSMITTER ID] =     XXXXXXXXXXXXXXXX
-// [CHANNEL       ] =                     XXXX
-// [MODE          ] =                         XXXX
-// [STRENGTH      ] =                             XXXXXXXX
-// [CHECKSUM      ] =                                     XXXXXXXX
-// [END           ] =                                             000
-
 /// Channels one can send a message on
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -28,13 +19,13 @@ impl From<u8> for Channel {
     }
 }
 
-impl Into<Vec<bool>> for Channel {
+impl Into<[bool; 4]> for &Channel {
     /// Convert a Channel to a vector of bits
-    fn into(self) -> Vec<bool> {
+    fn into(self) -> [bool; 4] {
         match self {
-            Channel::Zero => vec![false, false, false, false],
-            Channel::One => vec![false, false, false, true],
-            Channel::Two => vec![false, false, true, false],
+            Channel::Zero => [false, false, false, false],
+            Channel::One => [false, false, false, true],
+            Channel::Two => [false, false, true, false],
         }
     }
 }
@@ -49,7 +40,7 @@ pub enum Action {
     Vibrate = 2,
     /// Beep the collar
     Beep = 3,
-    // Toggle the light on the collar
+    /// Toggle the light on the collar
     Light = 4,
 }
 
@@ -66,19 +57,28 @@ impl From<u8> for Action {
     }
 }
 
-impl Into<Vec<bool>> for Action {
+impl Into<[bool; 4]> for &Action {
     /// Convert an Action to a vector of bits
-    fn into(self) -> Vec<bool> {
+    fn into(self) -> [bool; 4] {
         match self {
-            Action::Shock => vec![false, false, false, true],
-            Action::Vibrate => vec![false, false, true, false],
-            Action::Beep => vec![false, false, true, true],
-            Action::Light => vec![false, true, false, false],
+            Action::Shock => [false, false, false, true],
+            Action::Vibrate => [false, false, true, false],
+            Action::Beep => [false, false, true, true],
+            Action::Light => [false, true, false, false],
         }
     }
 }
 
 /// Packet to send to the collar
+///
+/// Each packet is 32 bits in length and can be converted into a vector of bits:
+/// [PREFIX        ] = SYNC
+/// [TRANSMITTER ID] =     XXXXXXXXXXXXXXXX
+/// [CHANNEL       ] =                     XXXX
+/// [MODE          ] =                         XXXX
+/// [STRENGTH      ] =                             XXXXXXXX
+/// [CHECKSUM      ] =                                     XXXXXXXX
+/// [END           ] =                                             000
 #[derive(Debug, Clone)]
 pub struct Packet {
     /// ID of the collar
@@ -110,7 +110,7 @@ impl Packet {
     }
 }
 
-impl Into<Vec<bool>> for Packet {
+impl Into<Vec<bool>> for &Packet {
     /// Convert a Packet to a vector of bits
     fn into(self) -> Vec<bool> {
         let mut bits = Vec::new();
@@ -120,10 +120,10 @@ impl Into<Vec<bool>> for Packet {
             bits.push((self.id >> i) & 1 == 1);
         }
 
-        let channel: Vec<bool> = self.channel.into();
+        let channel: [bool; 4] = (&self.channel).into();
         bits.extend(channel);
 
-        let action: Vec<bool> = self.action.into();
+        let action: [bool; 4] = (&self.action).into();
         bits.extend(action);
 
         for i in (0..8).rev() {
@@ -131,7 +131,7 @@ impl Into<Vec<bool>> for Packet {
             bits.push((self.intensity >> i) & 1 == 1);
         }
 
-        let checksum = Self::checksum(&bits);
+        let checksum = Packet::checksum(&bits);
         bits.extend(checksum);
 
         for _ in 0..3 {
